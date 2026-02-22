@@ -1,0 +1,216 @@
+name: aiwebengine
+
+services:
+  # Caddy reverse proxy with automatic HTTPS
+  caddy:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM caddy:2-alpine
+        COPY Caddyfile.production /etc/caddy/Caddyfile
+    # image: caddy:2-alpine
+    container_name: aiwebengine-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3 support
+    volumes:
+      # - ./Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - caddy-logs:/var/log/caddy
+    networks:
+      - aiwebengine-network
+    depends_on:
+      aiwebengine-1:
+        condition: service_healthy
+      aiwebengine-2:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Production deployment - Instance 1
+  aiwebengine-1:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    image: ghcr.io/lpajunen/aiwebengine:latest # aiwebengine:latest
+    container_name: aiwebengine-1
+    restart: unless-stopped
+    # Expose port only to internal network (not to host)
+    expose:
+      - "3000"
+    # Use this if you want direct access for debugging (not recommended in production)
+    # ports:
+    #   - "127.0.0.1:3000:3000"
+    volumes:
+      # Persist logs (instance-specific)
+      - ./logs/instance-1:/app/logs
+      # Persist scripts
+      - ./scripts:/app/scripts:ro
+      # Migration files (read-only)
+      - ./data:/app/data:ro
+    environment:
+      - RUST_LOG=info
+      # Auth configuration
+      - APP_AUTH__JWT_SECRET=${APP_AUTH__JWT_SECRET:-change-this-in-production}
+      - APP_AUTH__BOOTSTRAP_ADMINS=${APP_AUTH__BOOTSTRAP_ADMINS:-["admin@example.com"]}
+      # Google OAuth
+      - APP_AUTH__PROVIDERS__GOOGLE__CLIENT_ID=${APP_AUTH__PROVIDERS__GOOGLE__CLIENT_ID:-}
+      - APP_AUTH__PROVIDERS__GOOGLE__CLIENT_SECRET=${APP_AUTH__PROVIDERS__GOOGLE__CLIENT_SECRET:-}
+      - APP_AUTH__PROVIDERS__GOOGLE__REDIRECT_URI=${APP_AUTH__PROVIDERS__GOOGLE__REDIRECT_URI:-}
+      # Microsoft OAuth
+      - APP_AUTH__PROVIDERS__MICROSOFT__CLIENT_ID=${APP_AUTH__PROVIDERS__MICROSOFT__CLIENT_ID:-}
+      - APP_AUTH__PROVIDERS__MICROSOFT__CLIENT_SECRET=${APP_AUTH__PROVIDERS__MICROSOFT__CLIENT_SECRET:-}
+      - APP_AUTH__PROVIDERS__MICROSOFT__REDIRECT_URI=${APP_AUTH__PROVIDERS__MICROSOFT__REDIRECT_URI:-}
+      - APP_AUTH__PROVIDERS__MICROSOFT__TENANT_ID=${APP_AUTH__PROVIDERS__MICROSOFT__TENANT_ID:-common}
+      # Apple OAuth (optional)
+      # - APP_AUTH__PROVIDERS__APPLE__CLIENT_ID=${APP_AUTH__PROVIDERS__APPLE__CLIENT_ID:-}
+      # - APP_AUTH__PROVIDERS__APPLE__CLIENT_SECRET=${APP_AUTH__PROVIDERS__APPLE__CLIENT_SECRET:-}
+      # - APP_AUTH__PROVIDERS__APPLE__REDIRECT_URI=${APP_AUTH__PROVIDERS__APPLE__REDIRECT_URI:-}
+      # - APP_AUTH__PROVIDERS__APPLE__TEAM_ID=${APP_AUTH__PROVIDERS__APPLE__TEAM_ID:-}
+      # Security
+      - APP_SECURITY__API_KEY=${APP_SECURITY__API_KEY:-change-this-in-production}
+      # CSRF & session encryption keys (base64 encoded 32-byte values)
+      # Generate example: openssl rand -base64 32
+      - APP_SECURITY__CSRF_KEY=${APP_SECURITY__CSRF_KEY:-}
+      - APP_SECURITY__SESSION_ENCRYPTION_KEY=${APP_SECURITY__SESSION_ENCRYPTION_KEY:-}
+      - APP_SECURITY__SECRET_ENCRYPTION_KEY=${APP_SECURITY__SECRET_ENCRYPTION_KEY:-}
+      # Repository
+      - APP_REPOSITORY__DATABASE_URL=postgresql://aiwebengine:${POSTGRES_PASSWORD:-change-this-password}@postgres:5432/aiwebengine
+    networks:
+      - aiwebengine-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/3000' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+  # Production deployment - Instance 2
+  aiwebengine-2:
+    image: ghcr.io/lpajunen/aiwebengine:latest # aiwebengine:latest
+    container_name: aiwebengine-2
+    restart: unless-stopped
+    # Expose port only to internal network (not to host)
+    expose:
+      - "3000"
+    volumes:
+      # Persist logs (instance-specific)
+      - ./logs/instance-2:/app/logs
+      # Persist scripts
+      - ./scripts:/app/scripts:ro
+      # Migration files (read-only)
+      - ./data:/app/data:ro
+    environment:
+      - RUST_LOG=info
+      # Auth configuration
+      - APP_AUTH__JWT_SECRET=${APP_AUTH__JWT_SECRET:-change-this-in-production}
+      - APP_AUTH__BOOTSTRAP_ADMINS=${APP_AUTH__BOOTSTRAP_ADMINS:-["admin@example.com"]}
+      # Google OAuth
+      - APP_AUTH__PROVIDERS__GOOGLE__CLIENT_ID=${APP_AUTH__PROVIDERS__GOOGLE__CLIENT_ID:-}
+      - APP_AUTH__PROVIDERS__GOOGLE__CLIENT_SECRET=${APP_AUTH__PROVIDERS__GOOGLE__CLIENT_SECRET:-}
+      - APP_AUTH__PROVIDERS__GOOGLE__REDIRECT_URI=${APP_AUTH__PROVIDERS__GOOGLE__REDIRECT_URI:-}
+      # Microsoft OAuth
+      - APP_AUTH__PROVIDERS__MICROSOFT__CLIENT_ID=${APP_AUTH__PROVIDERS__MICROSOFT__CLIENT_ID:-}
+      - APP_AUTH__PROVIDERS__MICROSOFT__CLIENT_SECRET=${APP_AUTH__PROVIDERS__MICROSOFT__CLIENT_SECRET:-}
+      - APP_AUTH__PROVIDERS__MICROSOFT__REDIRECT_URI=${APP_AUTH__PROVIDERS__MICROSOFT__REDIRECT_URI:-}
+      - APP_AUTH__PROVIDERS__MICROSOFT__TENANT_ID=${APP_AUTH__PROVIDERS__MICROSOFT__TENANT_ID:-common}
+      # Security
+      - APP_SECURITY__API_KEY=${APP_SECURITY__API_KEY:-change-this-in-production}
+      # CSRF & session encryption keys (base64 encoded 32-byte values)
+      - APP_SECURITY__CSRF_KEY=${APP_SECURITY__CSRF_KEY:-}
+      - APP_SECURITY__SESSION_ENCRYPTION_KEY=${APP_SECURITY__SESSION_ENCRYPTION_KEY:-}
+      - APP_SECURITY__SECRET_ENCRYPTION_KEY=${APP_SECURITY__SECRET_ENCRYPTION_KEY:-}
+      # Repository
+      - APP_REPOSITORY__DATABASE_URL=postgresql://aiwebengine:${POSTGRES_PASSWORD:-change-this-password}@postgres:5432/aiwebengine
+    networks:
+      - aiwebengine-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/3000' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:16-alpine
+    container_name: aiwebengine-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=aiwebengine
+      - POSTGRES_USER=aiwebengine
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-change-this-password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - aiwebengine-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiwebengine"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Uncomment to expose PostgreSQL port
+    # ports:
+    #   - "5432:5432"
+
+  # Optional: Prometheus for metrics (future enhancement)
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: aiwebengine-prometheus
+  #   restart: unless-stopped
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+  #   volumes:
+  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus-data:/prometheus
+  #   networks:
+  #     - aiwebengine-network
+  #   ports:
+  #    - "9090:9090"
+  #  depends_on:
+  #    - aiwebengine
+
+  # Optional: Grafana for visualization (future enhancement)
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: aiwebengine-grafana
+  #   restart: unless-stopped
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+  #     - GF_USERS_ALLOW_SIGN_UP=false
+  #   volumes:
+  #     - grafana-data:/var/lib/grafana
+  #     - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+  #     - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+  #   networks:
+  #     - aiwebengine-network
+  #   ports:
+  #     - "3001:3000"
+  #   depends_on:
+  #     - prometheus
+
+networks:
+  aiwebengine-network:
+    driver: bridge
+
+volumes:
+  caddy-data:      # Caddy certificates and data
+  caddy-config:    # Caddy configuration
+  caddy-logs:      # Caddy access logs
+  postgres-data:
+  # prometheus-data:
+  # grafana-data:
